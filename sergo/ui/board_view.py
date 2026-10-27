@@ -422,15 +422,37 @@ class BoardView:
         pygame.draw.circle(surface, marker, (px, py), max(3, radius // 3), 2)
 
     def _draw_ghost(self, surface, game, point: int) -> None:
+        """Полупрозрачный камень под курсором.
+
+        На нелегальной точке вместо камня рисуем перечёркнутый кружок:
+        иначе призрак просто не появляется, и это читается как
+        зависший интерфейс — непонятно, то ли курсор не там, то ли ход
+        запрещён.
+        """
+        if point is None or not (0 <= point < game.board.n):
+            return
         if not game.can_play():
             return
         if game.board.stones[point] != EMPTY:
             return
-        if not game.board.is_legal(point, game.turn):
-            return
 
         px, py = self.point_to_pixel(point)
         radius = max(4, int(self.cell * 0.46))
+
+        if not game.board.is_legal(point, game.turn):
+            # Запрещённый ход: серый кружок с перечёркиванием.
+            overlay = pygame.Surface((radius * 2 + 4, radius * 2 + 4),
+                                     pygame.SRCALPHA)
+            center = (radius + 2, radius + 2)
+            pygame.draw.circle(overlay, (120, 120, 128, 60), center, radius)
+            pygame.draw.circle(overlay, (170, 90, 85, 210), center, radius, 2)
+            d = int(radius * 0.62)
+            pygame.draw.line(overlay, (190, 100, 95, 220),
+                             (center[0] - d, center[1] - d),
+                             (center[0] + d, center[1] + d), 2)
+            surface.blit(overlay, (px - radius - 2, py - radius - 2))
+            return
+
         overlay = pygame.Surface((radius * 2 + 4, radius * 2 + 4),
                                  pygame.SRCALPHA)
         center = (radius + 2, radius + 2)

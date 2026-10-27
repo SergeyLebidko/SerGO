@@ -517,6 +517,11 @@ class App:
         self.engine.set_board(self.game.board)
         self.engine.forget()
         self.show_territory = False
+        # Новая доска может быть меньше: старый hover_point тогда
+        # указывает за её пределы. Без сброса отрисовка падала с
+        # IndexError, и интерфейс выглядел зависшим.
+        self.hover_point = None
+        self._hover_score_block = False
 
     # ------------------------------------------------------------------ действия
 

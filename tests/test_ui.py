@@ -404,6 +404,97 @@ class TestAppSmoke(unittest.TestCase):
         )
         self.assertEqual(painted, 0, "единичный пункт не должен подписываться")
 
+    def test_ghost_survives_board_shrink(self):
+        """Смена 19×19 на 9×9 не должна ронять отрисовку.
+
+        Была ошибка: hover_point оставался от прежней доски и указывал
+        за пределы нового массива — IndexError в _draw_ghost. Со стороны
+        это выглядело как зависший интерфейс.
+        """
+        from sergo.ui.app import App
+
+        app = App(size=19)
+        app.mode = "human_human"
+        app.hover_point = 360          # точка есть только на 19×19
+        self.assertGreaterEqual(app.hover_point, 81)
+
+        app.game.new_game(size=9)
+        app._reset_ai()
+        app._draw()                    # не должно падать
+        self.assertIsNone(app.hover_point, "hover_point не сброшен")
+
+    def test_ghost_ignores_out_of_range_point(self):
+        """Даже при испорченном hover_point отрисовка не падает."""
+        from sergo.ui.app import App
+
+        app = App(size=9)
+        app.mode = "human_human"
+        app.hover_point = 500          # заведомо вне 9×9
+        app._draw()
+
+        app.hover_point = -5
+        app._draw()
+
+    def test_illegal_point_shows_crossed_circle(self):
+        """На запрещённой точке рисуем перечёркнутый кружок, а не пустоту.
+
+        Пустота читается как зависший интерфейс: непонятно, курсор не
+        там или ход запрещён.
+        """
+        import pygame as pg
+        from sergo.board import EMPTY, WHITE
+        from sergo.ui.app import App
+
+        app = App(size=9)
+        app.mode = "human_human"
+        board = app.game.board
+        # Окружаем E5 белыми — чёрным туда ходить нельзя (самоубийство).
+        for text in ("D5", "F5", "E4", "E6"):
+            board.stones[at(9, text)] = WHITE
+        board.empties = [i for i in range(81) if board.stones[i] == EMPTY]
+        board.epos = [0] * 81
+        for k, i in enumerate(board.empties):
+            board.epos[i] = k
+        app.game.turn = 1  # BLACK
+
+        point = at(9, "E5")
+        self.assertFalse(board.is_legal(point, app.game.turn))
+
+        app.hover_point = point
+        app._draw()
+        px, py = app.board_view.point_to_pixel(point)
+        with_marker = app.screen.get_at((px, py))[:3]
+
+        app.hover_point = None
+        app._draw()
+        without = app.screen.get_at((px, py))[:3]
+
+        self.assertNotEqual(with_marker, without,
+                            "на запрещённой точке ничего не нарисовано")
+
+    def test_ghost_absent_on_occupied_point(self):
+        """На занятой точке призрака быть не должно."""
+        from sergo.ui.app import App
+
+        app = App(size=9)
+        app.mode = "human_human"
+        point = at(9, "E5")
+        app._play_human(point)
+        app.hover_point = point
+        app._draw()
+
+    def test_ghost_absent_when_ai_moves(self):
+        """Пока ходит ИИ, свой призрак не показываем."""
+        from sergo.ui.app import App
+
+        app = App(size=9)
+        app.mode = "human_ai"
+        app.human_color = BLACK
+        app._play_human(at(9, "E5"))
+        self.assertFalse(app._human_to_move())
+        app.hover_point = at(9, "D4")
+        app._draw()
+
     def test_settings_panel(self):
         from sergo.ui.app import App
 
