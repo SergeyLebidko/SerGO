@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Тесты и инструменты
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Логи SerGO
+sergo_error.log
+
+# Редакторы и ОС
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
