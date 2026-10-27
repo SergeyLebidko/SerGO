@@ -93,10 +93,11 @@ def interleave(black: str, white: str) -> list:
 
 
 def shot_start() -> None:
-    """Стартовый экран 9×9."""
+    """Стартовый экран 9×9: дебют, у обоих цветов уже есть камни."""
     app = fresh_app(9)
-    app._play_human(at(9, "E5"))
-    app.hover_point = at(9, "F5")
+    for text in ("E5", "D4", "F5", "C6"):
+        app._play_human(at(9, text))
+    app.hover_point = at(9, "G5")
     app._draw()
     save(app, "start-9x9.png")
 
@@ -109,11 +110,45 @@ def shot_settings() -> None:
     save(app, "settings.png")
 
 
+def play_real_game(app: App, seed: int, max_moves: int = 200) -> None:
+    """Сыграть настоящую партию бот-бот, чтобы позиция была правдоподобной.
+
+    Расставленные вручную камни выглядят неестественно, а счёт по ним
+    часто показывает «терр. 0 / 0»: стены не соединены, и вся доска
+    оказывается одной нейтральной областью. Настоящая партия даёт
+    связные группы и реальную территорию.
+    """
+    from sergo.board import PASS, other
+    from sergo.engine import Engine
+
+    black = Engine(app.game.board, komi=app.game.komi, level="normal",
+                   time_override=0.05, seed=seed)
+    white = Engine(app.game.board, komi=app.game.komi, level="normal",
+                   time_override=0.05, seed=seed + 1000)
+    color = BLACK
+    passes = 0
+    for _ in range(max_moves):
+        engine = black if color == BLACK else white
+        move = engine.choose_move(color)
+        if not app.game.play(move, color):
+            break
+        if move == PASS:
+            passes += 1
+            if passes >= 2:
+                break
+        else:
+            passes = 0
+        color = other(color)
+
+
 def shot_midgame() -> None:
-    """Середина партии на 13×13 с панелью."""
+    """Середина партии на 13×13 с реальным счётом."""
     app = fresh_app(13)
-    place(app, interleave("D4 F3 C6 G5 E7 D8 F9 K7 H5",
-                          "E4 F5 D6 G6 E8 C8 H8 K8 J7"))
+    # Останавливаем партию задолго до заполнения доски: так видны
+    # и группы, и территория, а картинка остаётся читаемой.
+    play_real_game(app, seed=13, max_moves=60)
+    while app.game.phase != "playing" and app.game.moves:
+        app.game.undo()
     app._draw()
     save(app, "midgame-13x13.png")
 
@@ -149,10 +184,11 @@ def shot_capture() -> None:
 
 
 def shot_19x19() -> None:
-    """Доска 19×19."""
+    """Доска 19×19: реальная партия, чтобы счёт был осмысленным."""
     app = fresh_app(19)
-    place(app, interleave("D4 D16 Q4 Q16 K10 C6 R14 F3 N17 H3",
-                          "D10 Q10 K4 C14 R6 F17 N3 K16 H17 P9"))
+    play_real_game(app, seed=23, max_moves=90)
+    while app.game.phase != "playing" and app.game.moves:
+        app.game.undo()
     app._draw()
     save(app, "board-19x19.png")
 

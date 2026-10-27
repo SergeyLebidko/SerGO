@@ -11,7 +11,6 @@ from sergo.board import (  # noqa: E402
 )
 from sergo.scoring import (  # noqa: E402
     score, score_area, score_territory, estimate_score_fast,
-    estimate_balance,
 )
 
 
@@ -186,48 +185,6 @@ class TestInfluenceEstimate(unittest.TestCase):
         with_infl = estimate_score_fast(b, komi=0, influence=True)
         without = estimate_score_fast(b, komi=0, influence=False)
         self.assertGreater(with_infl, without)
-
-
-class TestBalanceEstimate(unittest.TestCase):
-    """Оценка для полосы-баланса: только замкнутая территория."""
-
-    def test_empty_board(self):
-        self.assertAlmostEqual(estimate_balance(Board(9), 6.5), -6.5)
-
-    def test_single_corner_stone_is_not_territory(self):
-        # Один камень в углу не должен «владеть» всей доской.
-        b = Board(9)
-        put(b, BLACK, "A9")
-        diff = estimate_balance(b, komi=0)
-        self.assertLess(diff, 5, f"один камень дал {diff} очков")
-
-    def test_edge_region_not_counted(self):
-        b = Board(9)
-        put(b, BLACK, "A5 A6 A7")
-        # Область слева выходит на край — не считается.
-        self.assertAlmostEqual(estimate_balance(b, komi=0), 3.0, places=6)
-
-    def test_enclosed_territory_counted(self):
-        b = Board(9)
-        # Чёрное кольцо вокруг E5.
-        put(b, BLACK, "E4 E6 D5 F5")
-        put(b, WHITE, "A1")
-        diff = estimate_balance(b, komi=0)
-        # +1 за территорию E5, камни 4:1.
-        self.assertGreater(diff, 0)
-
-    def test_stable_during_opening(self):
-        """Оценка не должна прыгать от хода к ходу в дебюте."""
-        b = Board(9)
-        values = []
-        for text in ("E5", "D4", "F5", "D5", "E6", "F4", "E7"):
-            from sergo.board import LETTERS
-            p = (9 - int(text[1:])) * 9 + LETTERS.index(text[0])
-            color = BLACK if len(values) % 2 == 0 else WHITE
-            b.play(p, color)
-            values.append(estimate_balance(b, 6.5))
-        spread = max(values) - min(values)
-        self.assertLess(spread, 10.0, f"разброс {spread:.1f}")
 
 
 class TestScoreText(unittest.TestCase):

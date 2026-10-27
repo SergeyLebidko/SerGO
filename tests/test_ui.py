@@ -109,18 +109,49 @@ class TestAppSmoke(unittest.TestCase):
         src = inspect.getsource(app_module.App._draw_move_log)
         self.assertNotIn("%", src)
 
-    def test_balance_bar_drawn(self):
+    def test_balance_bar_shows_real_score(self):
+        """Полоса показывает настоящий счёт, а не прогноз."""
         from sergo.ui.app import App, _black_share
+        from sergo.scoring import score_area
 
         app = App(size=9)
+        app.mode = "human_human"
+        for text in ("E5", "D4", "F5"):
+            app._play_human(at(9, text))
         app._draw()
-        # Шкала: ровно -> 50%, коми -> чуть меньше 50%.
-        self.assertAlmostEqual(_black_share(0, 9, 81), 0.5)
-        self.assertLess(_black_share(-6.5, 9, 81), 0.5)
-        self.assertGreater(_black_share(20, 9, 81), 0.5)
-        # Ограничения шкалы.
-        self.assertLessEqual(_black_share(1000, 9, 81), 0.98)
-        self.assertGreaterEqual(_black_share(-1000, 9, 81), 0.02)
+
+        result = score_area(app.game.board, app.game.komi)
+        # Доля чёрных = их очки / сумма очков.
+        expected = max(0.02, min(0.98,
+                                 result.black / (result.black + result.white)))
+        self.assertAlmostEqual(_black_share(result.black, result.white),
+                               expected)
+
+    def test_share_is_balanced_when_equal(self):
+        from sergo.ui.app import _black_share
+
+        self.assertAlmostEqual(_black_share(50, 50), 0.5)
+        self.assertGreater(_black_share(60, 40), 0.5)
+        self.assertLess(_black_share(40, 60), 0.5)
+
+    def test_share_clamped(self):
+        from sergo.ui.app import _black_share
+
+        self.assertLessEqual(_black_share(1000, 0), 0.98)
+        self.assertGreaterEqual(_black_share(0, 1000), 0.02)
+        # Нулевой счёт не должен давать деления на ноль.
+        self.assertAlmostEqual(_black_share(0, 0), 0.5)
+
+    def test_score_undefined_until_both_colors_play(self):
+        """Пока камни только одного цвета, счёт не показываем."""
+        import inspect
+
+        from sergo.ui import app as app_module
+
+        # Логика внутри _draw_balance: known = оба цвета на доске.
+        src = inspect.getsource(app_module.App._draw_balance)
+        self.assertIn("black_stones > 0 and white_stones > 0", src)
+        self.assertIn("позиция не определена", src)
 
     def test_settings_panel(self):
         from sergo.ui.app import App

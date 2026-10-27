@@ -34,19 +34,17 @@ PANEL_W = 330
 FPS = 60
 
 
-def _black_share(diff: float, size: int, points: int) -> float:
-    """Доля доски за чёрными по разнице очков (0..1).
+def _black_share(black: float, white: float) -> float:
+    """Доля доски за чёрными по их доле в общем счёте (0..1).
 
-    Линейная шкала: разница в очках делится на число пунктов доски.
-    Для полосы это честнее, чем перевод в «вероятность победы»: коми
-    6.5 на доске 9×9 — это перевес белых примерно на 8% доски, а не
-    «95% шансов на победу». Полоса должна показывать соотношение сил,
-    а не категоричность оценки.
+    Считается прямо из очков: `чёрные / (чёрные + белые)`. Это честнее
+    любой «вероятности победы» — полоса показывает реальное соотношение
+    счёта, а не категоричность оценки.
     """
-    if points <= 0:
+    total = black + white
+    if total <= 0:
         return 0.5
-    share = 0.5 + diff / (2.0 * points)
-    return max(0.02, min(0.98, share))
+    return max(0.02, min(0.98, black / total))
 
 
 class App:
@@ -629,19 +627,30 @@ class App:
         return True
 
     def _draw_balance(self, x: int, y: int, panel_x: int) -> int:
-        """Полоса-баланс: насколько позиция в пользу чёрных или белых.
+        """Счёт текущей позиции — как если бы партия закончилась сейчас.
 
-        Оценка считается по текущей расстановке (камни + территория +
-        коми), то есть отвечает на вопрос «если партия закончится
-        сейчас». Полоса показывает долю доски, которую оценка отдаёт
-        чёрным; подпись — разницу в очках.
+        Это настоящий подсчёт по китайским правилам (камни + территория
+        + коми), тот же, что будет при «Подтвердить счёт». Полоса
+        показывает соотношение очков, подпись — разницу.
+
+        Пока на доске камни только одного цвета, счёт формально отдаёт
+        всю доску этому цвету (один камень в углу «замыкает» край).
+        В этом случае вместо цифры честно пишем, что позиция не
+        определена.
         """
-        from ..scoring import estimate_balance
+        from ..scoring import score_area
 
-        diff = estimate_balance(self.game.board, self.game.komi)
-        share = _black_share(diff, self.game.size, self.game.board.n)
+        board = self.game.board
+        black_stones = board.stones.count(BLACK)
+        white_stones = board.stones.count(WHITE)
+        known = black_stones > 0 and white_stones > 0
 
-        draw_text(self.screen, "Оценка позиции", (x, y), 14, TEXT_DIM)
+        result = score_area(board, self.game.komi) if known else None
+        diff = (result.black - result.white) if result else 0.0
+        share = _black_share(result.black, result.white) if result else 0.5
+
+        label_title = "Счёт сейчас" if known else "Счёт сейчас"
+        draw_text(self.screen, label_title, (x, y), 14, TEXT_DIM)
         y += 22
 
         bar_w = PANEL_W - 40
@@ -651,10 +660,16 @@ class App:
         # #282b30 чисто чёрная половина была бы неразличима.
         pygame.draw.rect(self.screen, (248, 246, 240), bar)
 
-        split = int(bar_w * share)
-        if split > 0:
-            pygame.draw.rect(self.screen, (24, 24, 28),
-                             pygame.Rect(bar.x, bar.y, split, bar_h))
+        if known:
+            split = int(bar_w * share)
+            if split > 0:
+                pygame.draw.rect(self.screen, (24, 24, 28),
+                                 pygame.Rect(bar.x, bar.y, split, bar_h))
+        else:
+            # Нейтральная полоса: считать пока нечего.
+            pygame.draw.rect(self.screen, (120, 120, 128),
+                             pygame.Rect(bar.x, bar.y, bar_w, bar_h))
+
         pygame.draw.rect(self.screen, (130, 130, 136), bar, 1)
         # Метка «ровно» посередине.
         mid = bar.x + bar_w // 2
@@ -662,18 +677,30 @@ class App:
                          (mid, bar.y - 3), (mid, bar.y + bar_h + 2), 1)
         y += bar_h + 8
 
-        if abs(diff) < 0.5:
-            label, color = "ровно", TEXT_DIM
+        if not known:
+            draw_text(self.screen, "позиция не определена", (x, y), 13,
+                      TEXT_DIM, bold=True)
+            y += 20
+        elif abs(diff) < 0.05:
+            draw_text(self.screen, "ровно", (x, y), 13, TEXT_DIM, bold=True)
+            y += 20
         elif diff > 0:
-            label, color = f"Чёрные +{diff:.1f}", TEXT
+            draw_text(self.screen, f"Чёрные +{diff:.1f}", (x, y), 13, TEXT,
+                      bold=True)
+            y += 20
         else:
-            label, color = f"Белые +{-diff:.1f}", TEXT
-        draw_text(self.screen, label, (x, y), 13, color, bold=True)
-        y += 20
+            draw_text(self.screen, f"Белые +{-diff:.1f}", (x, y), 13, TEXT,
+                      bold=True)
+            y += 20
 
-        draw_text(self.screen, f"камней: {self.game.board.stones.count(BLACK)}"
-                               f" / {self.game.board.stones.count(WHITE)}",
-                  (x, y), 12, TEXT_DIM)
+        if known and result is not None:
+            draw_text(self.screen,
+                      f"камни {result.black_stones} / {result.white_stones}"
+                      f" · терр. {result.black_territory} / {result.white_territory}",
+                      (x, y), 12, TEXT_DIM, max_width=PANEL_W - 40)
+        else:
+            draw_text(self.screen, f"камней: {black_stones} / {white_stones}",
+                      (x, y), 12, TEXT_DIM)
         y += 22
         return y
 
