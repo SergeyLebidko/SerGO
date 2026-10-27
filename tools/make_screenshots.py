@@ -33,7 +33,22 @@ def at(size: int, text: str) -> int:
     return (size - int(text[1:])) * size + LETTERS.index(text[0])
 
 
+def settle(app: App) -> None:
+    """Дождаться окончания анимаций, чтобы кадр был стабильным.
+
+    Эффект появления камня длится 150 мс: если снимать сразу, камень
+    окажется недорисованным, и скриншот будет отличаться от запуска к
+    запуску.
+    """
+    deadline = time.monotonic() + 1.0
+    while app.effects.busy() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    app.effects.update()
+
+
 def save(app: App, name: str) -> None:
+    settle(app)
+    app._draw()
     path = os.path.join(OUT_DIR, name)
     pygame.image.save(app.screen, path)
     width, height = app.screen.get_size()
@@ -120,11 +135,32 @@ def play_real_game(app: App, seed: int, max_moves: int = 200) -> None:
     """
     from sergo.board import PASS, other
     from sergo.engine import Engine
+    from sergo.mcts import MCTS
 
-    black = Engine(app.game.board, komi=app.game.komi, level="normal",
-                   time_override=0.05, seed=seed)
-    white = Engine(app.game.board, komi=app.game.komi, level="normal",
-                   time_override=0.05, seed=seed + 1000)
+    # Фиксированное число симуляций вместо времени: иначе партия
+    # зависит от скорости машины и скриншоты получаются разными при
+    # каждом запуске.
+    SIMS = 400
+
+    def make(seed_value):
+        engine = Engine(app.game.board, komi=app.game.komi,
+                        level="normal", seed=seed_value,
+                        time_override=1.0)
+        original = engine._ensure_mcts
+
+        def ensure():
+            if engine.mcts is None:
+                engine.mcts = MCTS(
+                    engine.board, engine.komi, engine.rng,
+                    max_candidates=64, rollout_limit=40,
+                    simulation_limit=SIMS)
+            return engine.mcts
+
+        engine._ensure_mcts = ensure
+        return engine
+
+    black = make(seed)
+    white = make(seed + 1000)
     color = BLACK
     passes = 0
     for _ in range(max_moves):

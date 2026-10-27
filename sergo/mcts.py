@@ -70,7 +70,8 @@ class MCTS:
     def __init__(self, board: Board, komi: float = 6.5,
                  rng: random.Random | None = None,
                  max_candidates: int = 64, c: float = 1.1,
-                 rollout_limit: int | None = None):
+                 rollout_limit: int | None = None,
+                 simulation_limit: int | None = None):
         self.board = board
         self.komi = komi
         self.rng = rng or random.Random()
@@ -84,6 +85,9 @@ class MCTS:
         self._root_player = BLACK
         self._root_hash = -1
         self._played: tuple[int, ...] = ()
+        # Жёсткий предел симуляций. Нужен для воспроизводимости: поиск
+        # по времени даёт разный ход на быстрой и медленной машине.
+        self.simulation_limit = simulation_limit
 
     # ------------------------------------------------------------------ API
 
@@ -102,9 +106,12 @@ class MCTS:
         self._root_hash = self.board.hash
 
         start = time.monotonic()
-        while self.simulations < 400000:
+        limit = self.simulation_limit or 400000
+        while self.simulations < limit:
             self._iterate()
             self.simulations += 1
+            if self.simulation_limit is not None:
+                continue
             if self.simulations >= 12 and time.monotonic() >= deadline:
                 break
             if self.simulations % 32 == 0 and cancel is not None and cancel():

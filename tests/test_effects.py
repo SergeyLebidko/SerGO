@@ -21,6 +21,35 @@ def at(size, text):
     return (size - int(text[1:])) * size + LETTERS.index(text[0])
 
 
+def _alive(effects) -> bool:
+    """Есть ли ещё незавершённые эффекты.
+
+    Проверяем по фактическому времени, а не состоянием списка: update()
+    вызывается отдельно, и между вызовами список ещё не очищен.
+    """
+    now = time.monotonic()
+    for item in effects._captures:
+        if now < item.start + item.delay + effects.capture_duration:
+            return True
+    for item in effects._places:
+        if now < item.start + effects.place_duration:
+            return True
+    return False
+
+
+def _wait_until(predicate, timeout: float = 2.0, step: float = 0.01) -> None:
+    """Ждать условия с запасом по времени.
+
+    Фиксированный sleep под нагрузкой может не дождаться, и тест
+    начнёт «мигать». Здесь ждём до выполнения или до таймаута.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(step)
+
+
 class TestDistance(unittest.TestCase):
     def test_horizontal(self):
         self.assertAlmostEqual(_distance(at(9, "A5"), at(9, "C5"), 9), 2.0)
@@ -57,18 +86,18 @@ class TestEffects(unittest.TestCase):
         self.assertFalse(e.hides(0))
 
     def test_capture_expires(self):
-        e = Effects(capture_duration=0.1)
+        e = Effects(capture_duration=0.05)
         e.add_capture([40], WHITE, origin=40, radius=18, size=9)
         self.assertTrue(e.busy())
-        time.sleep(0.16)
+        _wait_until(lambda: not _alive(e), timeout=2.0)
         e.update()
         self.assertFalse(e.busy())
 
     def test_place_expires(self):
-        e = Effects(place_duration=0.1)
+        e = Effects(place_duration=0.05)
         e.add_place(40, BLACK, radius=18)
         self.assertTrue(e.busy())
-        time.sleep(0.16)
+        _wait_until(lambda: not _alive(e), timeout=2.0)
         e.update()
         self.assertFalse(e.busy())
 
@@ -217,7 +246,7 @@ class TestAppEffects(unittest.TestCase):
         app.effects.add_capture([40], WHITE, radius=18, size=9)
         app.pending_move = (app.ai_token, 41, 0.5, 10)
         app.pending_since = time.monotonic()
-        time.sleep(0.08)
+        _wait_until(lambda: not _alive(app.effects), timeout=2.0)
         app.effects.update()
         app._poll_ai()
         self.assertEqual(len(app.game.moves), 1)

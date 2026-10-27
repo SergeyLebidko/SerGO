@@ -321,9 +321,8 @@ class TestAppSmoke(unittest.TestCase):
         app = App(size=9)
         view = app.board_view
         point = at(9, "E5")
-        # Зоны меньше 3 пунктов не подписываются, поэтому берём 3.
-        zone = Zone(owner=1, points=[point, point + 1, point + 2],
-                    center=point)
+        # Подписываются зоны от 2 пунктов; берём две клетки.
+        zone = Zone(owner=1, points=[point, point + 1], center=point)
 
         surf = pg.Surface((WINDOW_W, WINDOW_H), pg.SRCALPHA)
         view._draw_zone_numbers(surf, [zone])
@@ -357,6 +356,53 @@ class TestAppSmoke(unittest.TestCase):
             zone = Zone(owner=1, points=[point], center=point)
             surf = pg.Surface((WINDOW_W, WINDOW_H), pg.SRCALPHA)
             view._draw_zones(surf, [zone])
+
+    def test_two_point_zone_is_labelled(self):
+        """Зона из двух пунктов должна быть подписана.
+
+        Иначе число очков в панели оказывается больше числа видимых
+        зон, и это выглядит как ошибка подсчёта.
+        """
+        import pygame as pg
+        from sergo.scoring import Zone
+        from sergo.ui.app import App, WINDOW_W, WINDOW_H
+
+        app = App(size=9)
+        view = app.board_view
+        point = at(9, "C7")
+        zone = Zone(owner=WHITE, points=[point, point + 9], center=point)
+
+        surf = pg.Surface((WINDOW_W, WINDOW_H), pg.SRCALPHA)
+        view._draw_zone_numbers(surf, [zone])
+
+        # Вокруг центра должны появиться пиксели подложки.
+        px, py = view.point_to_pixel(point)
+        painted = sum(
+            1 for dx in range(-10, 11) for dy in range(-8, 9)
+            if surf.get_at((px + dx, py + dy))[3] > 0
+        )
+        self.assertGreater(painted, 20, "зона из 2 пунктов не подписана")
+
+    def test_single_point_zone_not_labelled(self):
+        """Единичные пункты не подписываем — иначе россыпь единиц."""
+        import pygame as pg
+        from sergo.scoring import Zone
+        from sergo.ui.app import App, WINDOW_W, WINDOW_H
+
+        app = App(size=9)
+        view = app.board_view
+        point = at(9, "C7")
+        zone = Zone(owner=WHITE, points=[point], center=point)
+
+        surf = pg.Surface((WINDOW_W, WINDOW_H), pg.SRCALPHA)
+        view._draw_zone_numbers(surf, [zone])
+
+        px, py = view.point_to_pixel(point)
+        painted = sum(
+            1 for dx in range(-10, 11) for dy in range(-8, 9)
+            if surf.get_at((px + dx, py + dy))[3] > 0
+        )
+        self.assertEqual(painted, 0, "единичный пункт не должен подписываться")
 
     def test_settings_panel(self):
         from sergo.ui.app import App
@@ -397,9 +443,13 @@ class TestAppSmoke(unittest.TestCase):
         from sergo.ui.app import App
 
         app = App(size=9)
-        app._note("проверка", 0.15)
+        app._note("проверка", 0.1)
         self.assertTrue(app._note_alive())
-        time.sleep(0.25)
+        # Ждём до истечения срока, а не фиксированный sleep: под
+        # нагрузкой фиксированная пауза может не сработать.
+        deadline = time.monotonic() + 2.0
+        while app._note_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
         self.assertFalse(app._note_alive())
 
     def test_hint_available_on_human_turn(self):

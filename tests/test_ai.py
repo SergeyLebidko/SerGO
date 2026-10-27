@@ -131,6 +131,39 @@ class TestMCTS(unittest.TestCase):
         self.assertEqual(b.stones[at("F5")], WHITE, "ход не должен меняться")
 
 
+class TestReproducibility(unittest.TestCase):
+    """Одинаковые seed и число симуляций должны давать одинаковый ход.
+
+    Нужно для скриншотов: поиск по времени зависит от скорости машины,
+    и картинка получается разной при каждом запуске.
+    """
+
+    def _move(self, seed):
+        from sergo.mcts import MCTS
+
+        b = Board(9)
+        b.play(40, BLACK)
+        mcts = MCTS(b, komi=6.5, rng=random.Random(seed), rollout_limit=40,
+                    simulation_limit=200)
+        move, _, sims = mcts.think(WHITE, thinking_time=10.0)
+        return move, sims
+
+    def test_same_seed_same_move(self):
+        first = self._move(7)
+        second = self._move(7)
+        self.assertEqual(first, second, "поиск недетерминирован")
+
+    def test_simulation_limit_is_respected(self):
+        from sergo.mcts import MCTS
+
+        b = Board(9)
+        mcts = MCTS(b, komi=6.5, rng=random.Random(1), rollout_limit=40,
+                    simulation_limit=50)
+        mcts.think(BLACK, thinking_time=10.0)
+        self.assertEqual(mcts.simulations, 50,
+                         "лимит симуляций не соблюдается")
+
+
 class TestAnalysisValue(unittest.TestCase):
     """Тактический ход не должен возвращать фиктивные 0.5."""
 
