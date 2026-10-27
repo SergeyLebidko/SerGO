@@ -114,6 +114,68 @@ def _regions(board) -> tuple[list[list[int]], list[list[int]]]:
     return regions, borders
 
 
+@dataclass
+class Zone:
+    """Одна область пустых пунктов — единица территории на доске."""
+
+    owner: int             # BLACK / WHITE / 0 (спорная)
+    points: list[int]      # точки области
+    center: int = -1       # точка для подписи с числом
+    border_stones: int = 0  # сколько камней её ограничивает
+
+    @property
+    def size(self) -> int:
+        return len(self.points)
+
+
+def _zone_center(board, points: list[int]) -> int:
+    """Точка внутри зоны, ближайшая к её центроиду.
+
+    Ставить подпись в центроид нельзя: он может попасть на камень или
+    за пределы зоны при её изогнутой форме.
+    """
+    if not points:
+        return -1
+    size = board.size
+    cx = sum(p % size for p in points) / len(points)
+    cy = sum(p // size for p in points) / len(points)
+    return min(points, key=lambda p: (p % size - cx) ** 2
+               + (p // size - cy) ** 2)
+
+
+def score_zones(board, komi: float = 6.5, dead=()) -> list[Zone]:
+    """Разбить территорию на зоны — для наглядного разбора счёта.
+
+    Возвращает список зон, каждая со своим владельцем:
+    BLACK, WHITE или 0 для спорной (касается камней обоих цветов).
+    Сумма размеров всех зон равна числу пустых пунктов.
+    """
+    work = board.copy()
+    if dead:
+        _remove_dead(work, dead)
+
+    regions, borders = _regions(work)
+    zones: list[Zone] = []
+    stones = work.stones
+
+    for cells, border in zip(regions, borders):
+        # Считаем, сколько камней ограничивает зону: это подсказывает,
+        # какая группа её держит.
+        touching: set[int] = set()
+        for p in cells:
+            for q in work.nei[p]:
+                if stones[q] != EMPTY:
+                    touching.add(q)
+        zones.append(Zone(
+            owner=border,
+            points=list(cells),
+            center=_zone_center(work, cells),
+            border_stones=len(touching),
+        ))
+
+    return zones
+
+
 def _remove_dead(board, dead) -> None:
     """Убрать помеченные мёртвые камни (изменяет stones на копии)."""
     if not dead:

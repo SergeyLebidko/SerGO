@@ -23,7 +23,7 @@ sys.path.insert(0, ROOT)
 
 import pygame  # noqa: E402
 
-from sergo.board import BLACK, WHITE, LETTERS  # noqa: E402
+from sergo.board import BLACK, WHITE, LETTERS, PASS  # noqa: E402
 from sergo.ui.app import App  # noqa: E402
 
 OUT_DIR = os.path.join(ROOT, "docs", "screenshots")
@@ -194,13 +194,16 @@ def shot_19x19() -> None:
 
 
 def shot_scoring() -> None:
-    """Разметка территории."""
+    """Разметка территории после двух пасов.
+
+    Берём реальную партию: у расставленных вручную камней почти нет
+    территории (стены не соединены), и метки разметки нечего рисовать.
+    """
     app = fresh_app(9)
-    place(app, interleave("B3 C4 D4 E3 F2 C6 D6 B5 B6 A4",
-                          "E4 F4 G3 G5 H5 H6 J4 J5 H7 H8"))
-    app.game.passes = 1
-    app.game.play(-1, app.game.turn)
-    app.game.play(-1, app.game.turn)
+    play_real_game(app, seed=11, max_moves=300)
+    # Доводим до разметки: два паса, если партия ещё идёт.
+    while app.game.phase == "playing":
+        app.game.play(PASS, app.game.turn)
     app._draw()
     save(app, "scoring.png")
 
@@ -215,6 +218,24 @@ def shot_hint() -> None:
     save(app, "hint.png")
 
 
+def shot_score_breakdown() -> None:
+    """Разбор счёта: заливка зон, числа и подсветка группы."""
+    app = fresh_app(13)
+    play_real_game(app, seed=13, max_moves=60)
+    while app.game.phase != "playing" and app.game.moves:
+        app.game.undo()
+
+    app.show_breakdown = True
+    # Наводим курсор на камень, чтобы на скриншоте была подсветка группы.
+    board = app.game.board
+    for point in range(board.n):
+        if board.stones[point] == BLACK:
+            app.hover_point = point
+            break
+    app._draw()
+    save(app, "score-breakdown.png")
+
+
 def main() -> int:
     os.makedirs(OUT_DIR, exist_ok=True)
     pygame.init()
@@ -222,7 +243,7 @@ def main() -> int:
 
     print("Генерация скриншотов:")
     for fn in (shot_start, shot_settings, shot_midgame, shot_capture,
-               shot_19x19, shot_scoring, shot_hint):
+               shot_19x19, shot_scoring, shot_hint, shot_score_breakdown):
         fn()
 
     pygame.quit()

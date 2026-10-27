@@ -10,7 +10,8 @@ from sergo.board import (  # noqa: E402
     Board, BLACK, WHITE, EMPTY, LETTERS,
 )
 from sergo.scoring import (  # noqa: E402
-    score, score_area, score_territory, estimate_score_fast,
+    Zone, score, score_area, score_territory, estimate_score_fast,
+    score_zones,
 )
 
 
@@ -202,3 +203,117 @@ class TestScoreText(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestScoreZones(unittest.TestCase):
+    """Разбиение территории на зоны для наглядного разбора."""
+
+    def _prepare(self, size=9):
+        b = Board(size)
+        b.empties = list(range(size * size))
+        b.epos = list(range(size * size))
+        return b
+
+    def test_empty_board_is_one_zone(self):
+        b = self._prepare()
+        zones = score_zones(b)
+        self.assertEqual(len(zones), 1)
+        self.assertEqual(zones[0].size, 81)
+        self.assertEqual(zones[0].owner, 0)
+
+    def test_sizes_sum_to_empty_points(self):
+        b = self._prepare()
+        put(b, BLACK, "B1 C1 D1 B2 D2 B3 C3 D3")
+        put(b, WHITE, "F7 G7 H7 F8 H8 F9 G9 H9")
+        b.empties = [i for i in range(81) if b.stones[i] == 0]
+        b.epos = [0] * 81
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        zones = score_zones(b)
+        self.assertEqual(sum(z.size for z in zones), b.stones.count(0))
+
+    def test_owners_match_score_area(self):
+        b = self._prepare()
+        put(b, BLACK, "B1 C1 D1 B2 D2 B3 C3 D3")
+        put(b, WHITE, "F7 G7 H7 F8 H8 F9 G9 H9")
+        b.empties = [i for i in range(81) if b.stones[i] == 0]
+        b.epos = [0] * 81
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        zones = score_zones(b)
+        result = score_area(b)
+        black_zone = sum(z.size for z in zones if z.owner == BLACK)
+        white_zone = sum(z.size for z in zones if z.owner == WHITE)
+        neutral = sum(z.size for z in zones if z.owner == 0)
+        self.assertEqual(black_zone, result.black_territory)
+        self.assertEqual(white_zone, result.white_territory)
+        self.assertEqual(neutral, result.neutral)
+
+    def test_center_inside_zone(self):
+        b = self._prepare()
+        put(b, BLACK, "B1 C1 D1 B2 D2 B3 C3 D3")
+        put(b, WHITE, "F7 G7 H7 F8 H8 F9 G9 H9")
+        b.empties = [i for i in range(81) if b.stones[i] == 0]
+        b.epos = [0] * 81
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        for zone in score_zones(b):
+            self.assertIn(zone.center, zone.points,
+                          "центр подписи должен лежать внутри зоны")
+
+    def test_center_is_not_a_stone(self):
+        b = self._prepare()
+        # Зона «кольцо» вокруг камня: центроид попадает на камень.
+        for t in ("E4", "E6", "D5", "F5"):
+            b.stones[self._at(t)] = BLACK
+        b.empties = [i for i in range(81) if b.stones[i] == 0]
+        b.epos = [0] * 81
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        for zone in score_zones(b):
+            self.assertEqual(b.stones[zone.center], 0,
+                             "центр подписи не должен попадать на камень")
+
+    def test_border_stones_counted(self):
+        b = self._prepare(5)
+        # Кольцо вокруг единственного пункта C3.
+        for t in ("C2", "C4", "B3", "D3"):
+            b.stones[self._at(t, 5)] = BLACK
+        b.empties = [i for i in range(25) if b.stones[i] == 0]
+        b.epos = [0] * 25
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        zones = score_zones(b)
+        enclosed = [z for z in zones if z.size == 1]
+        self.assertTrue(enclosed)
+        self.assertEqual(enclosed[0].border_stones, 4)
+
+    def test_dead_stones_are_removed(self):
+        b = self._prepare(5)
+        put(b, WHITE, "C3")
+        put(b, BLACK, "C2 C4 B3 D3")
+        b.empties = [i for i in range(25) if b.stones[i] == 0]
+        b.epos = [0] * 25
+        for k, i in enumerate(b.empties):
+            b.epos[i] = k
+
+        without_dead = score_zones(b)
+        with_dead = score_zones(b, dead={self._at("C3", 5)})
+        self.assertNotEqual([z.size for z in without_dead],
+                            [z.size for z in with_dead],
+                            "снятие мёртвого камня должно менять зоны")
+
+    def test_all_sizes(self):
+        for size in (9, 13, 19):
+            b = self._prepare(size)
+            zones = score_zones(b)
+            self.assertEqual(sum(z.size for z in zones), size * size)
+
+    @staticmethod
+    def _at(text, size=9):
+        return (size - int(text[1:])) * size + LETTERS.index(text[0])

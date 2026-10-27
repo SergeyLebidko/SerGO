@@ -69,6 +69,12 @@ class App:
         self.pending_move: tuple | None = None
         self.pending_since = 0.0
         self.show_territory = False
+        # Разбор счёта: заливка зон на доске и расшифровка в панели.
+        self.show_breakdown = False
+        self._zones_cache: tuple | None = None
+        self._score_rect: pygame.Rect | None = None
+        self._hover_score_block = False
+        self._hover_group_info: tuple[int, int] | None = None
         self.hover_point: int | None = None
         self.ai_thinking = False
         self.result_queue: queue.Queue = queue.Queue()
@@ -195,6 +201,9 @@ class App:
 
             if event.type == pygame.MOUSEMOTION:
                 self.hover_point = self.board_view.pixel_to_point(event.pos)
+                self._hover_score_block = (
+                    self._score_rect is not None
+                    and self._score_rect.collidepoint(event.pos))
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 self._handle_click(event.pos)
@@ -221,10 +230,17 @@ class App:
         if key == pygame.K_u and (event.mod & pygame.KMOD_CTRL):
             self._action("undo")
             return True
+        if key == pygame.K_s:
+            self.toggle_breakdown()
+            return True
         return False
 
     def _handle_click(self, pos) -> None:
         if self.show_settings:
+            return
+        # Клик по блоку «Счёт сейчас» включает разбор счёта.
+        if self._score_rect is not None and self._score_rect.collidepoint(pos):
+            self.toggle_breakdown()
             return
         if not self.game.can_play():
             # В режиме разметки клик по камню помечает его мёртвым.
@@ -323,6 +339,32 @@ class App:
         # Дерево ИИ относится к прежней позиции — сбрасываем.
         self.engine.forget()
         self.hint_point = None
+
+    # ------------------------------------------------------------------ разбор счёта
+
+    def zones(self) -> list:
+        """Зоны территории с кэшем по позиции.
+
+        score_zones делает flood fill по всей доске; на 19×19 это
+        дорого для каждого кадра, поэтому кэшируем по хешу позиции.
+        """
+        from ..scoring import score_zones
+
+        board = self.game.board
+        key = (board.hash, self.game.komi, frozenset(self.game.dead))
+        if self._zones_cache is not None and self._zones_cache[0] == key:
+            return self._zones_cache[1]
+        zones = score_zones(board, self.game.komi, self.game.dead)
+        self._zones_cache = (key, zones)
+        return zones
+
+    def toggle_breakdown(self) -> None:
+        """Включить или выключить разбор счёта."""
+        self.show_breakdown = not self.show_breakdown
+        if self.show_breakdown:
+            self._note("Разбор счёта включён", 2.0)
+        else:
+            self._note("Разбор счёта выключен", 2.0)
 
     def _start_move_effects(self) -> None:
         """Запустить анимации по последнему сыгранному ходу."""
@@ -532,7 +574,11 @@ class App:
             show_territory=self.show_territory or
             self.game.phase != GamePhase.PLAYING,
             effects=self.effects,
+            zones=self.zones() if self.show_breakdown else None,
         )
+        self._hover_group_info = None
+        if self.show_breakdown:
+            self._draw_hover_group()
         self.effects.draw(self.screen, self.board_view, self.game.board)
         if self.hint_point is not None:
             self.board_view.draw_hint(self.screen, self.hint_point)
@@ -593,15 +639,17 @@ class App:
                 draw_text(self.screen, "Ровно", (x, y), 14, TEXT_DIM)
             y += 24
 
-        # Захваченные камни
-        y += 10
-        draw_text(self.screen, "Пленные", (x, y), 14, TEXT_DIM)
-        y += 20
-        draw_text(self.screen, f"Чёрные: {self.game.captured(BLACK)}", (x, y),
-                  14, TEXT)
-        y += 18
-        draw_text(self.screen, f"Белые: {self.game.captured(WHITE)}", (x, y),
-                  14, TEXT)
+        # Захваченные камни. В разборе счёта не показываем: места нет,
+        # да и в китайских правилах пленные в счёт не входят.
+        if not self.show_breakdown:
+            y += 10
+            draw_text(self.screen, "Пленные", (x, y), 14, TEXT_DIM)
+            y += 20
+            draw_text(self.screen, f"Чёрные: {self.game.captured(BLACK)}",
+                      (x, y), 14, TEXT)
+            y += 18
+            draw_text(self.screen, f"Белые: {self.game.captured(WHITE)}",
+                      (x, y), 14, TEXT)
 
         # Кнопки
         for btn in self.buttons:
@@ -649,8 +697,13 @@ class App:
         diff = (result.black - result.white) if result else 0.0
         share = _black_share(result.black, result.white) if result else 0.5
 
-        label_title = "Счёт сейчас" if known else "Счёт сейчас"
-        draw_text(self.screen, label_title, (x, y), 14, TEXT_DIM)
+        arrow = "▾" if self.show_breakdown else "▸"
+        title_color = ACCENT if (self._hover_score_block or
+                                 self.show_breakdown) else TEXT_DIM
+        title = f"{arrow} Счёт сейчас"
+        draw_text(self.screen, title, (x, y), 14, title_color)
+        # Запоминаем область блока: по ней ловим клик.
+        self._score_rect = pygame.Rect(x - 6, y - 4, PANEL_W - 28, 0)
         y += 22
 
         bar_w = PANEL_W - 40
@@ -702,7 +755,86 @@ class App:
             draw_text(self.screen, f"камней: {black_stones} / {white_stones}",
                       (x, y), 12, TEXT_DIM)
         y += 22
+
+        if self.show_breakdown:
+            y = self._draw_breakdown(x, y, result, known)
+            self._score_rect.height = y - self._score_rect.y + 2
+        else:
+            self._score_rect.height = y - self._score_rect.y + 18
         return y
+
+    def _draw_breakdown(self, x: int, y: int, result, known: bool) -> int:
+        """Расшифровка: из чего складывается счёт каждой стороны."""
+        if not known or result is None:
+            draw_text(self.screen, "Считать пока нечего", (x, y + 4), 12,
+                      TEXT_DIM)
+            return y + 24
+
+        right = x + PANEL_W - 46
+        # Компактно: две строки на сторону + итог + строка о группе.
+        draw_text(self.screen,
+                  f"Ч {result.black_stones}кам + {result.black_territory}терр",
+                  (x, y), 12, TEXT)
+        draw_text(self.screen, f"{result.black:.1f}", (right, y), 12, TEXT,
+                  bold=True, right=True)
+        y += 16
+
+        draw_text(self.screen,
+                  f"Б {result.white_stones}кам + {result.white_territory}терр"
+                  f" + {result.komi:.1f}",
+                  (x, y), 12, TEXT)
+        draw_text(self.screen, f"{result.white:.1f}", (right, y), 12, TEXT,
+                  bold=True, right=True)
+        y += 18
+
+        pygame.draw.line(self.screen, (70, 74, 80), (x, y), (right, y), 1)
+        y += 5
+
+        diff = result.black - result.white
+        if abs(diff) < 0.05:
+            draw_text(self.screen, "ровно", (x, y), 12, TEXT_DIM, bold=True)
+        elif diff > 0:
+            draw_text(self.screen, f"Чёрные +{diff:.1f}", (x, y), 12, ACCENT,
+                      bold=True)
+        else:
+            draw_text(self.screen, f"Белые +{-diff:.1f}", (x, y), 12, ACCENT,
+                      bold=True)
+
+        zones = self.zones()
+        neutral = sum(z.size for z in zones if z.owner == 0)
+        if neutral:
+            draw_text(self.screen, f"спорных: {neutral}", (right, y), 11,
+                      TEXT_DIM, right=True)
+        y += 16
+
+        info = self._hover_group_info
+        if info is not None:
+            stones, libs = info
+            draw_text(self.screen,
+                      f"группа {stones} камн., дамэ {libs}",
+                      (x, y), 11, ACCENT, max_width=PANEL_W - 40)
+            y += 15
+        return y
+
+    def _draw_hover_group(self) -> None:
+        """Подсветить группу под курсором, если включён разбор счёта.
+
+        В режиме разметки территории клик по камню означает «мёртвый»,
+        поэтому подсветку там не показываем — только зоны и числа.
+        """
+        if self.game.phase == GamePhase.SCORING:
+            return
+        point = self.hover_point
+        if point is None:
+            return
+        board = self.game.board
+        if board.stones[point] == 0:
+            return
+        group, liberties = board.group_info(point)
+        self.board_view._draw_group_highlight(
+            self.screen, board, group, liberties)
+        # Текст в панель дописывает _draw_breakdown через атрибут.
+        self._hover_group_info = (len(group), len(liberties))
 
     def _draw_move_log(self) -> None:
         """Небольшой журнал последних ходов внизу панели."""

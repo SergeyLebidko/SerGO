@@ -74,8 +74,13 @@ class BoardView:
             label_h = f.get_height()
             span = max(widest, label_h)
 
+            # gap — это и есть зазор между краем камня и подписью.
+            # Раньше он был 3 px, и цифры прилипали к камням; теперь
+            # растёт вместе с клеткой, но не меньше 6 px.
+            gap = max(6, int(cell * 0.14))
+
             # margin/2 — центр полосы; половина подписи + камень + зазор.
-            needed = 2 * (cell * 0.46 + span / 2 + 3)
+            needed = 2 * (cell * 0.46 + span / 2 + gap)
             if abs(needed - margin) < 2:
                 margin = int(needed)
                 break
@@ -115,16 +120,183 @@ class BoardView:
     # ------------------------------------------------------------------ отрисовка
 
     def draw(self, surface, game, hover_point: int | None = None,
-             show_territory: bool = False, effects=None) -> None:
+             show_territory: bool = False, effects=None,
+             zones: list | None = None) -> None:
         self._draw_wood(surface)
+        # Заливка зон — под сеткой и камнями, чтобы не глушить ни то,
+        # ни другое.
+        if zones:
+            self._draw_zones(surface, zones)
         self._draw_grid(surface)
         self._draw_stones(surface, game, effects)
+        # Числа зон — поверх камней и сетки, иначе их закрывают линии.
+        if zones:
+            self._draw_zone_numbers(surface, zones)
         if show_territory:
             self._draw_territory(surface, game)
         self._draw_last_move(surface, game, effects)
         if hover_point is not None:
             self._draw_ghost(surface, game, hover_point)
         self._draw_coords(surface)
+
+    def _draw_zones(self, surface, zones) -> None:
+        """Заливка территорий и числа пунктов — для разбора счёта.
+
+        Круги вокруг каждой точки сливаются в сплошное пятно с мягкими
+        краями, поэтому зона читается как область, а не как россыпь
+        точек. Спорные зоны заливаются серым и, если их немного,
+        получают диагональную штриховку.
+        """
+        if not zones:
+            return
+        half = self.cell / 2.0
+        empty_total = sum(z.size for z in zones)
+        neutral_points = sum(z.size for z in zones if z.owner == 0)
+
+        # Если спорная почти вся доска, заливать её бессмысленно: игрок
+        # и так видит, что территория не определена. Заливаем только
+        # принадлежащие зоны, спорные — лишь когда их немного.
+        show_neutral = empty_total > 0 and neutral_points <= empty_total * 0.55
+        hatch = neutral_points <= 40
+
+        # Всё рисуем на отдельном слое и обрезаем по доске: заливка у
+        # края иначе вылезает за её пределы.
+        layer_surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+        offset = (-self.rect.x, -self.rect.y)
+
+        # Радиус закругления пропорционален клетке, но ограничен:
+        # на 19×19 клетка мелкая, и большой радиус съел бы всю заливку.
+        radius = max(2, min(14, int(self.cell * 0.18)))
+        cell_i = int(self.cell) + 1
+
+        for zone in zones:
+            if zone.size == 0:
+                continue
+            # Цвета подобраны по замерам на дереве (222,184,135):
+            # тёмная заливка для чёрных, почти белая для белых,
+            # синевато-серая для спорных — она не путается с деревом.
+            if zone.owner == BLACK:
+                color = (10, 10, 18, 110)
+            elif zone.owner == WHITE:
+                color = (255, 255, 255, 190)
+            else:
+                if not show_neutral:
+                    continue
+                color = (86, 92, 118, 80)
+
+            # 1. Скруглённые клетки: дают мягкие внешние углы.
+            for p in zone.points:
+                px, py = self.point_to_pixel(p)
+                rect = pygame.Rect(int(px - half + offset[0]),
+                                   int(py - half + offset[1]),
+                                   cell_i, cell_i)
+                pygame.draw.rect(layer_surface, color, rect,
+                                 border_radius=radius)
+
+            # 2. Перемычки на внутренних границах: закрывают выемки,
+            # которые иначе остались бы между скруглёнными клетками.
+            self._draw_zone_bridges(layer_surface, zone, color, offset,
+                                    radius, cell_i)
+
+            if zone.owner == 0 and hatch and zone.size >= 3:
+                self._draw_hatch(layer_surface, zone, offset)
+
+        surface.blit(layer_surface, self.rect.topleft)
+
+    def _draw_zone_bridges(self, surface, zone, color, offset,
+                           radius: int, cell_i: int) -> None:
+        """Прямые перемычки между соседними клетками одной зоны.
+
+        Без них на каждом стыке скругления дают V-образную выемку, и
+        зона выглядит как набор плиток, а не как единая область.
+        """
+        if radius <= 0:
+            return
+        owner_points = set(zone.points)
+        size = self.size
+        half = self.cell / 2.0
+        band = radius * 2
+
+        for p in zone.points:
+            px, py = self.point_to_pixel(p)
+            x = int(px - half + offset[0])
+            y = int(py - half + offset[1])
+            cx = p % size
+            cy = p // size
+
+            # Сосед справа: перемычка по вертикальной границе.
+            if cx < size - 1 and (p + 1) in owner_points:
+                pygame.draw.rect(
+                    surface, color,
+                    pygame.Rect(x + cell_i - radius, y, band, cell_i))
+            # Сосед снизу: перемычка по горизонтальной границе.
+            if cy < size - 1 and (p + size) in owner_points:
+                pygame.draw.rect(
+                    surface, color,
+                    pygame.Rect(x, y + cell_i - radius, cell_i, band))
+
+    def _draw_zone_numbers(self, surface, zones) -> None:
+        """Числа пунктов в центрах зон.
+
+        Рисуются отдельным проходом поверх камней и сетки — иначе
+        подпись закрывается линиями.
+        """
+        font_size = max(11, int(self.cell * 0.42))
+        # Огромные спорные зоны не подписываем: число в двести с лишним
+        # пунктов не сообщает ничего полезного, а доску засоряет.
+        for zone in zones:
+            if zone.size < 3 or zone.center < 0 or zone.size > 60:
+                continue
+            self._draw_zone_number(surface, zone, font_size)
+
+    def _draw_hatch(self, surface, zone, offset=(0, 0)) -> None:
+        """Диагональная штриховка спорной зоны."""
+        step = max(4, int(self.cell * 0.40))
+        for p in zone.points:
+            px, py = self.point_to_pixel(p)
+            px += offset[0]
+            py += offset[1]
+            pygame.draw.line(surface, (150, 140, 120),
+                             (px - step, py + step), (px + step, py - step), 1)
+
+    def _draw_zone_number(self, surface, zone, font_size: int) -> None:
+        """Число пунктов в центре зоны.
+
+        Рисуем на светлой подложке: на тёмной заливке чёрных простой
+        текст сливался бы с фоном. Подложка снимает проблему для всех
+        типов зон и не зависит от цвета дерева.
+        """
+        px, py = self.point_to_pixel(zone.center)
+        text = str(zone.size)
+        f = font(font_size, bold=True)
+        surf = f.render(text, True, (26, 24, 22))
+
+        pad_x = 4
+        pad_y = 3
+        plate = pygame.Surface((surf.get_width() + pad_x * 2,
+                                surf.get_height() + pad_y), pygame.SRCALPHA)
+        # Скругление в треть высоты плашки: заметно, но не съедает
+        # цифру и не мешает читать двузначные числа.
+        radius = max(2, plate.get_height() // 3)
+        pygame.draw.rect(plate, (248, 245, 238, 205), plate.get_rect(),
+                         border_radius=radius)
+        surface.blit(plate, (px - plate.get_width() // 2,
+                             py - plate.get_height() // 2))
+        surface.blit(surf, (px - surf.get_width() // 2,
+                            py - surf.get_height() // 2))
+
+    def _draw_group_highlight(self, surface, board, points, liberties) -> None:
+        """Обвести группу камней и отметить её дамэ — подсказка при наведении."""
+        if not points:
+            return
+        radius = max(4, int(self.cell * 0.46))
+        for p in points:
+            px, py = self.point_to_pixel(p)
+            pygame.draw.circle(surface, (90, 170, 240), (px, py), radius, 2)
+        dot = max(2, int(self.cell * 0.12))
+        for p in liberties:
+            px, py = self.point_to_pixel(p)
+            pygame.draw.circle(surface, (90, 170, 240), (px, py), dot)
 
     def _draw_wood(self, surface) -> None:
         # Прямые углы: доска занимает весь левый край окна, и скругления
