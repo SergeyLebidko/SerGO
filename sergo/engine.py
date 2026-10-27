@@ -80,7 +80,9 @@ class Engine:
         self.time_override = time_override
         self.rng = random.Random(seed)
         self.mcts: MCTS | None = None
-        self._cancel = threading.Event()
+        # Счётчик поколений вместо Event: отмена не должна
+        # распространяться на следующий расчёт.
+        self._generation = 0
 
     # ------------------------------------------------------------------ настройки
 
@@ -96,11 +98,15 @@ class Engine:
             self.mcts = None
 
     def cancel(self) -> None:
-        """Попросить ИИ остановиться при первой возможности."""
-        self._cancel.set()
+        """Попросить ИИ остановиться при первой возможности.
 
-    def reset_cancel(self) -> None:
-        self._cancel.clear()
+        Увеличиваем счётчик поколений: расчёт, запущенный раньше, увидит
+        расхождение и остановится. Новый расчёт получает свежий номер,
+        поэтому отмена не «залипает» — в отличие от простого флага,
+        который после смены настроек обрывал следующий поиск на 32-й
+        симуляции.
+        """
+        self._generation += 1
 
     # ------------------------------------------------------------------ ход
 
@@ -148,8 +154,12 @@ class Engine:
         mcts = self._ensure_mcts()
         budget = self.budget()
 
+        # Запоминаем поколение на старте: если за время поиска случится
+        # отмена (новая партия, смена настроек), номер изменится и поиск
+        # остановится. Следующий расчёт начнёт с нового номера.
+        token = self._generation
         move, winrate, sims = mcts.think(
-            color, budget, cancel=self._cancel.is_set)
+            color, budget, cancel=lambda: self._generation != token)
 
         # На лёгком уровне иногда намеренно ошибаемся — иначе новичку
         # будет неинтересно играть.
@@ -163,8 +173,6 @@ class Engine:
 
     def think_async(self, color: int, callback) -> threading.Thread:
         """Запустить расчёт в фоне и вызвать callback(move, winrate, sims)."""
-        self.reset_cancel()
-
         def worker():
             try:
                 result = self.choose_move_detailed(color)

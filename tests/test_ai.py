@@ -131,6 +131,63 @@ class TestMCTS(unittest.TestCase):
         self.assertEqual(b.stones[at("F5")], WHITE, "ход не должен меняться")
 
 
+class TestCancelDoesNotLeak(unittest.TestCase):
+    """Отмена не должна урезать следующий расчёт.
+
+    Была ошибка: cancel() взводил флаг, а сбрасывался он только в
+    think_async, который интерфейс не использует. После любой смены
+    настроек поиск обрывался на 32-й симуляции, и ИИ на 19×19 отвечал
+    за 0.2 секунды вместо 5.
+    """
+
+    def test_cancel_does_not_affect_next_search(self):
+        b = Board(9)
+        b.play(b.n // 2, BLACK)
+        eng = Engine(b, level="normal", time_override=0.3, seed=3)
+
+        # Отменяем «в пустоту» — как это делает смена настроек в UI.
+        eng.cancel()
+
+        move, _, sims = eng.choose_move_detailed(WHITE)
+        self.assertTrue(move == PASS or b.is_legal(move, WHITE))
+        self.assertGreater(sims, 50,
+                           f"поиск обрезан после отмены: {sims} симуляций")
+
+    def test_cancel_during_search_stops_it(self):
+        """Отмена во время поиска должна его останавливать."""
+        import threading
+        import time
+
+        b = Board(9)
+        b.play(b.n // 2, BLACK)
+        eng = Engine(b, level="normal", time_override=5.0, seed=1)
+
+        timer = threading.Timer(0.2, eng.cancel)
+        timer.start()
+        t0 = time.monotonic()
+        eng.choose_move_detailed(WHITE)
+        elapsed = time.monotonic() - t0
+        timer.cancel()
+        self.assertLess(elapsed, 3.0,
+                        "отмена не остановила поиск за 3 секунды")
+
+    def test_board_change_keeps_full_budget(self):
+        """Смена доски не должна урезать следующий расчёт."""
+        small = Board(9)
+        small.play(small.n // 2, BLACK)
+        eng = Engine(small, level="normal", time_override=0.3, seed=2)
+
+        large = Board(19)
+        large.play(large.n // 2, BLACK)
+        eng.set_board(large)          # как при смене размера в настройках
+        eng.cancel()                  # интерфейс делает и это
+        eng.forget()
+
+        _, _, sims = eng.choose_move_detailed(WHITE)
+        self.assertGreater(sims, 20,
+                           f"после смены доски поиск обрезан: {sims}")
+
+
 class TestReproducibility(unittest.TestCase):
     """Одинаковые seed и число симуляций должны давать одинаковый ход.
 
