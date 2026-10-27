@@ -93,7 +93,7 @@ def main() -> int:
 
     try:
         from sergo.ui import main as run_ui
-        run_ui(size=args.size)
+        run_ui(size=args.size, level=args.level)
     except Exception:
         _show_error("SerGO — ошибка запуска", traceback.format_exc())
         return 1

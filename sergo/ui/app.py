@@ -729,5 +729,5 @@ class App:
                   12, TEXT_DIM)
 
 
-def main(size: int = 9) -> None:
-    App(size=size).run()
+def main(size: int = 9, level: str = "normal") -> None:
+    App(size=size, level=level).run()
